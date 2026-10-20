@@ -1,5 +1,5 @@
-# .github/workflows/build-virtualbox-windows.yml
-name: Build VirtualBox Windows
+
+name: Build VirtualBox 7.2 (Windows x64)
 
 on:
   workflow_dispatch:
@@ -7,33 +7,23 @@ on:
     branches:
       - main
       - VBox-7.2
-  pull_request:
-    branches:
-      - main
-      - VBox-7.2
 
 permissions:
   contents: read
 
-concurrency:
-  group: virtualbox-windows-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
-    name: Build VirtualBox 7.2 (Windows x64)
     runs-on: windows-2022
     timeout-minutes: 360
 
     env:
       VBOX_SOURCE: ${{ github.workspace }}
-      BUILD_LOG_DIR: ${{ github.workspace }}\build-logs
-      WINDOWS_KITS: C:\Program Files (x86)\Windows Kits\10
-      WINDOWS_SDK_VERSION: 10.0.22621.0
+      KBUILD_PATH: ${{ github.workspace }}\kBuild\kBuild
+      VBOX_WITHOUT_ADDITIONS: "1"
+      VBOX_WITH_ADDITIONS_PACKING: ""
 
     steps:
-      # 1. Checkout VirtualBox 7.2
-      - name: Checkout VirtualBox source
+      - name: Checkout VirtualBox
         uses: actions/checkout@v4
         with:
           repository: VirtualBox/virtualbox
@@ -41,167 +31,166 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
-      # 2. Create a directory for diagnostic logs
-      - name: Prepare build logs
+      - name: Setup MSVC x64 environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Verify kBuild and Windows SDK
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path $env:BUILD_LOG_DIR |
-            Out-Null
+          $ErrorActionPreference = "Stop"
 
-          Write-Host "Source: $env:VBOX_SOURCE"
-          Write-Host "Logs:   $env:BUILD_LOG_DIR"
+          Write-Host "=== Source directory ==="
+          Write-Host $env:VBOX_SOURCE
 
-      # 3. Confirm kBuild is in the expected nested directory
-      - name: Verify kBuild
-        shell: pwsh
-        run: |
-          $kb = Join-Path $env:VBOX_SOURCE "kBuild\kBuild"
+          Write-Host "=== kBuild directory ==="
+          Write-Host $env:KBUILD_PATH
 
           $required = @(
-            "$kb\footer.kmk",
-            "$kb\header.kmk",
-            "$kb\rules.kmk",
-            "$kb\bin\win.amd64\kmk.exe",
-            "$kb\bin\win.amd64\kmk_ash.exe"
+            "footer.kmk",
+            "header.kmk",
+            "rules.kmk",
+            "bin\win.amd64\kmk.exe",
+            "bin\win.amd64\kmk_ash.exe",
+            "bin\win.x86\kmk.exe"
           )
 
-          $missing = @($required | Where-Object { !(Test-Path $_) })
-
-          if ($missing.Count -gt 0) {
-            $missing | ForEach-Object { Write-Host "MISSING: $_" }
-            throw "Required kBuild files are missing."
-          }
-
-          "KBUILD_PATH=$kb" |
-            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-          & "$kb\bin\win.amd64\kmk.exe" --version
-
-      # 4. Verify the Windows SDK components
-      - name: Verify Windows SDK 10.0.22621
-        shell: pwsh
-        run: |
-          $sdk = $env:WINDOWS_KITS
-          $ver = $env:WINDOWS_SDK_VERSION
-
-          $required = @(
-            "$sdk\Include\$ver\um",
-            "$sdk\Include\$ver\shared",
-            "$sdk\Include\$ver\ucrt",
-            "$sdk\Lib\$ver\um\x64",
-            "$sdk\bin\$ver\x64\rc.exe"
-          )
-
-          foreach ($path in $required) {
-            if (!(Test-Path $path)) {
-              Write-Host "MISSING: $path"
-              throw "Windows SDK component is missing."
+          foreach ($item in $required) {
+            $path = Join-Path $env:KBUILD_PATH $item
+            if (-not (Test-Path $path)) {
+              throw "Missing required kBuild file: $path"
             }
             Write-Host "OK: $path"
           }
 
-          # Diagnostic only: these files do not prove that
-          # every WDK component is installed.
-          $ntddk = "$sdk\Include\$ver\km\ntddk.h"
-          Write-Host "ntddk.h exists: $(Test-Path $ntddk)"
+          $sdk = "C:\Program Files (x86)\Windows Kits\10"
+          if (-not (Test-Path (Join-Path $sdk "Include"))) {
+            throw "Windows 10 SDK Include directory not found: $sdk"
+          }
 
-          Get-ChildItem "$sdk\Lib\$ver" -Directory |
-            Select-Object -ExpandProperty FullName
+          if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+            throw "cl.exe not found. MSVC environment was not initialized."
+          }
 
-      # 5. Experimental workaround for the legacy DDK 7.1 check.
-      # This does NOT install a WDK and does NOT guarantee that
-      # subsequent driver-related build targets will succeed.
-      
-      - name: Skip legacy DDK 7.1 configure check
+          Write-Host "=== Compiler ==="
+          cl.exe 2>&1 | Select-Object -First 3
+
+          Write-Host "=== SDK versions ==="
+          Get-ChildItem (Join-Path $sdk "Include") -Directory |
+            Where-Object { $_.Name -like "10.0.*" } |
+            Select-Object -ExpandProperty Name
+
+      - name: Patch legacy DDK 7.1 check
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $file = Join-Path $env:VBOX_SOURCE "configure.vbs"
-          $content = Get-Content $file -Raw
 
-          # Match the call even if spacing or indentation differs.
-          $pattern = '(?im)^([ \t]*)CheckForWinDDK\s+strOptDDK\b[ \t]*$'
-          $matches = [regex]::Matches($content, $pattern)
+          if (-not (Test-Path $file)) {
+            throw "configure.vbs not found: $file"
+          }
+
+          $lines = [System.IO.File]::ReadAllLines($file)
+          $matches = @()
+
+          for ($i = 2000; $i -lt $lines.Length; $i++) {
+            if (
+              $lines[$i].Contains("CheckForWinDDK") -and
+              $lines[$i].Contains("strOptDDK") -and
+              $lines[$i] -notmatch '^\s*(sub|function)\b'
+            ) {
+              $matches += $i
+            }
+          }
 
           if ($matches.Count -ne 1) {
-            Write-Host "Could not uniquely locate the DDK check."
-            Select-String -Path $file -Pattern 'CheckForWinDDK|CheckForSDK10' |
-              ForEach-Object { Write-Host "$($_.LineNumber): $($_.Line)" }
+            Write-Host "Matching lines:"
+            Select-String -Path $file -Pattern "CheckForWinDDK" |
+              ForEach-Object {
+                Write-Host "$($_.LineNumber): $($_.Line)"
+              }
 
-            throw "Expected one DDK check call, found $($matches.Count)."
+            throw "Expected one DDK check call; found $($matches.Count)."
           }
 
-          $content = [regex]::Replace(
-            $content,
-            $pattern,
-            '$1'' Skipped experimentally for build without Guest Additions',
-            1
+          $idx = $matches[0]
+          Write-Host "Original line $($idx + 1): $($lines[$idx])"
+
+          $lines[$idx] =
+            "    ' Experimental: skip legacy DDK 7.1 configure check"
+
+          [System.IO.File]::WriteAllLines(
+            $file,
+            $lines,
+            [System.Text.UTF8Encoding]::new($false)
           )
 
-          Set-Content -Path $file -Value $content -Encoding utf8
+          Write-Host "Patched line $($idx + 1)."
+          Get-Content $file |
+            Select-Object -Skip ($idx - 2) -First 5
 
-          Write-Host "Updated configure.vbs"
-          Select-String -Path $file -Pattern 'Skipped experimentally'
-
-
-      # 6. Disable Guest Additions and their packaging in kBuild.
-      # The actual effect depends on the build targets and source configuration.
-      - name: Configure LocalConfig.kmk
-        shell: pwsh
-        run: |
-          $config = Join-Path $env:VBOX_SOURCE "LocalConfig.kmk"
-
-          @(
-            "VBOX_WITHOUT_ADDITIONS = 1"
-            "VBOX_WITH_ADDITIONS_PACKING ="
-            "VBOX_WINDDK = WINSDK10-KM"
-          ) | Set-Content -Path $config -Encoding utf8
-
-          Get-Content $config
-
-      # 7. Configure VirtualBox
       - name: Configure VirtualBox
         shell: pwsh
+        working-directory: ${{ github.workspace }}
         run: |
-          Set-Location $env:VBOX_SOURCE
+          $ErrorActionPreference = "Stop"
 
-          $configureLog = Join-Path $env:BUILD_LOG_DIR "configure.log"
+          $sdk = "C:\Program Files (x86)\Windows Kits\10"
 
-          & cscript.exe //nologo configure.vbs `
-            "--with-SDK10=$env:WINDOWS_KITS" 2>&1 |
-            Tee-Object -FilePath $configureLog
+          Write-Host "=== Configure VirtualBox ==="
+
+          & cscript.exe //nologo configure.vbs "--with-SDK10=$sdk"
 
           if ($LASTEXITCODE -ne 0) {
-            throw "configure.vbs failed with exit code $LASTEXITCODE"
+            Write-Host "=== configure.log (last 200 lines) ==="
+            if (Test-Path "configure.log") {
+              Get-Content "configure.log" -Tail 200
+            }
+            throw "VirtualBox configure failed with exit code $LASTEXITCODE."
           }
 
-      # 8. Build VirtualBox using kBuild
-      - name: Build VirtualBox
+          Write-Host "=== Generated configuration ==="
+          foreach ($name in @("AutoConfig.kmk", "Config.kmk", "env.bat")) {
+            if (Test-Path $name) {
+              Write-Host "Found: $name"
+            }
+          }
+
+      - name: Build VirtualBox without Guest Additions
         shell: pwsh
+        working-directory: ${{ github.workspace }}
         run: |
-          Set-Location $env:VBOX_SOURCE
+          $ErrorActionPreference = "Stop"
 
           $kmk = Join-Path $env:KBUILD_PATH "bin\win.amd64\kmk.exe"
-          $buildLog = Join-Path $env:BUILD_LOG_DIR "build.log"
 
-          & $kmk `
-            "VBOX_WITHOUT_ADDITIONS=1" `
-            "VBOX_WITH_ADDITIONS_PACKING=" `
-            "-j$env:NUMBER_OF_PROCESSORS" 2>&1 |
-            Tee-Object -FilePath $buildLog
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "kmk build failed with exit code $LASTEXITCODE"
+          if (-not (Test-Path $kmk)) {
+            throw "kmk.exe not found: $kmk"
           }
 
-      # 9. Upload logs even when configure or build fails
-      - name: Upload build logs
+          $jobs = [Environment]::ProcessorCount
+          Write-Host "Build jobs: $jobs"
+          Write-Host "Building without Guest Additions..."
+
+          & $kmk "-j$jobs" `
+            "VBOX_WITHOUT_ADDITIONS=1" `
+            "VBOX_WITH_ADDITIONS_PACKING="
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "kmk build failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: virtualbox-windows-build-logs
+          name: virtualbox-windows-build-diagnostics
+          if-no-files-found: warn
           path: |
-            build-logs/**
-            Config.kmk
+            configure.log
             AutoConfig.kmk
-          if-no-files-found: ignore
-          retention-days: 7
+            Config.kmk
+            env.bat
+            *.log
+            out/**/*.log
