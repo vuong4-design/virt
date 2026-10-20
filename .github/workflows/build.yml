@@ -129,55 +129,29 @@ jobs:
           Write-Host "Patched line $($idx + 1)."
           Get-Content $file |
             Select-Object -Skip ($idx - 2) -First 5
-      - name: Install Yasm and locate MIDL
+      
+      - name: Install Yasm 1.3.0
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          # Install Yasm assembler.
-          choco install yasm -y --no-progress
+          $url = "https://github.com/yasm/yasm/releases/download/v1.3.0/yasm-1.3.0-win32.exe"
+          $dir = Join-Path $env:RUNNER_TEMP "yasm"
+          $exe = Join-Path $dir "yasm.exe"
 
-          $yasm = Get-Command yasm.exe -ErrorAction SilentlyContinue
-          if (-not $yasm) {
-            $found = Get-ChildItem "C:\ProgramData\chocolatey" `
-              -Filter yasm.exe -Recurse -ErrorAction SilentlyContinue |
-              Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile $exe
 
-            if (-not $found) {
-              throw "yasm.exe was not found after installation."
-            }
+          $version = & $exe --version 2>&1
+          $version | Write-Host
 
-            $yasmDir = $found.DirectoryName
-          }
-          else {
-            $yasmDir = Split-Path $yasm.Source
+          if ($LASTEXITCODE -ne 0 -or
+              ($version -join "`n") -notmatch 'yasm 1\.3\.0') {
+            throw "Yasm 1.3.0 verification failed."
           }
 
-          $yasmDir | Out-File $env:GITHUB_PATH -Append -Encoding utf8
-          Write-Host "Yasm directory: $yasmDir"
+          $dir | Out-File $env:GITHUB_PATH -Append -Encoding utf8
 
-          # Locate MIDL in the installed Windows SDK.
-          $sdkBin = "C:\Program Files (x86)\Windows Kits\10\bin"
-
-          $midl = Get-ChildItem $sdkBin -Filter midl.exe -Recurse `
-            -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match '\\x64\\midl\.exe$' } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-
-          if (-not $midl) {
-            throw "midl.exe not found in Windows SDK. Install the SDK component containing MIDL."
-          }
-
-          $midlDir = $midl.DirectoryName
-          $midlDir | Out-File $env:GITHUB_PATH -Append -Encoding utf8
-
-          Write-Host "MIDL: $($midl.FullName)"
-          Write-Host "Yasm version:"
-          & (Join-Path $yasmDir "yasm.exe") --version
-
-          Write-Host "MIDL version:"
-          & $midl.FullName /? 2>&1 | Select-Object -First 3
           
       - name: Configure VirtualBox
         shell: pwsh
