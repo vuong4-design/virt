@@ -55,7 +55,9 @@ jobs:
             "bin\win.x86\kmk.exe"
           )
 
-          foreach ($item in $required) {$path = Join-Path $env:KBUILD_PATH$item
+          foreach ($item in $required) {
+            # Sử dụng nối chuỗi trực tiếp để vô hiệu hóa lỗi mất khoảng trắng
+            $path = "$env:KBUILD_PATH\$item"
             if (-not (Test-Path $path)) {
               throw "Missing required kBuild file: $path"
             }
@@ -63,7 +65,9 @@ jobs:
           }
 
           $sdk = "C:\Program Files (x86)\Windows Kits\10"
-          if (-not (Test-Path (Join-Path $sdk "Include"))) {
+          
+          # Nối chuỗi trực tiếp cho thư mục SDK Include
+          if (-not (Test-Path "$sdk\Include")) {
             throw "Windows 10 SDK Include directory not found: $sdk"
           }
 
@@ -75,7 +79,7 @@ jobs:
           cl.exe 2>&1 | Select-Object -First 3
 
           Write-Host "=== SDK versions ==="
-          Get-ChildItem (Join-Path $sdk "Include") -Directory |
+          Get-ChildItem "$sdk\Include" -Directory |
             Where-Object { $_.Name -like "10.0.*" } |
             Select-Object -ExpandProperty Name
 
