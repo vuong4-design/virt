@@ -111,30 +111,37 @@ jobs:
       # 5. Experimental workaround for the legacy DDK 7.1 check.
       # This does NOT install a WDK and does NOT guarantee that
       # subsequent driver-related build targets will succeed.
+      
       - name: Skip legacy DDK 7.1 configure check
         shell: pwsh
         run: |
           $file = Join-Path $env:VBOX_SOURCE "configure.vbs"
           $content = Get-Content $file -Raw
 
-          $pattern = '(?m)^([ \t]*)CheckForWinDDK[ \t]+strOptDDK[ \t]*$'
-
+          # Match the call even if spacing or indentation differs.
+          $pattern = '(?im)^([ \t]*)CheckForWinDDK\s+strOptDDK\b[ \t]*$'
           $matches = [regex]::Matches($content, $pattern)
 
           if ($matches.Count -ne 1) {
-            throw "Expected exactly one CheckForWinDDK strOptDDK call; found $($matches.Count). Review configure.vbs before patching."
+            Write-Host "Could not uniquely locate the DDK check."
+            Select-String -Path $file -Pattern 'CheckForWinDDK|CheckForSDK10' |
+              ForEach-Object { Write-Host "$($_.LineNumber): $($_.Line)" }
+
+            throw "Expected one DDK check call, found $($matches.Count)."
           }
 
           $content = [regex]::Replace(
             $content,
             $pattern,
-            '$1'' Skipped experimentally for build without Guest Additions'
+            '$1'' Skipped experimentally for build without Guest Additions',
+            1
           )
 
           Set-Content -Path $file -Value $content -Encoding utf8
 
-          Write-Host "Patched configure.vbs:"
+          Write-Host "Updated configure.vbs"
           Select-String -Path $file -Pattern 'Skipped experimentally'
+
 
       # 6. Disable Guest Additions and their packaging in kBuild.
       # The actual effect depends on the build targets and source configuration.
