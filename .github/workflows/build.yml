@@ -33,6 +33,39 @@ jobs:
           ref: VBox-7.2
           fetch-depth: 1
           submodules: recursive
+       
+      - name: Diagnose kBuild
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE "kBuild"
+
+          Write-Host "=== kBuild directory ==="
+          if (Test-Path $root) {
+            Get-ChildItem $root -Force |
+              Select-Object Name, Mode
+          } else {
+            throw "kBuild submodule directory does not exist"
+          }
+
+          Write-Host "`n=== Required kBuild files ==="
+          $required = @(
+            "footer.kmk",
+            "header.kmk",
+            "rules.kmk",
+            "bin/win.amd64/kmk.exe",
+            "bin/win.amd64/kmk_ash.exe",
+            "bin/win.x86/kmk.exe",
+            "bin/win.x86/kmk_ash.exe"
+          )
+
+          foreach ($file in $required) {
+            $path = Join-Path $root $file
+            if (Test-Path $path) {
+              Write-Host "FOUND: $file"
+            } else {
+              Write-Host "MISSING: $file"
+            }
+          }
 
       - name: Show source revision
         shell: pwsh
