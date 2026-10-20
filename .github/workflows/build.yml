@@ -189,10 +189,10 @@ jobs:
           $sdk = "C:\Program Files (x86)\Windows Kits\10"
           
           # Patch: Copy MIDL.exe and related tools to the unversioned bin folder expected by configure.vbs
-          $binDir = Join-Path$sdk "bin"
-          $latestSdk = (Get-ChildItem -Path $binDir -Directory \vert{} Where-Object {$_.Name -like "10.0.*" } | Sort-Object Name -Descending | Select-Object -First 1).Name
-          $src = Join-Path $binDir "$latestSdk\x64"
-          $dst = Join-Path$binDir "x64"
+          $binDir = Join-Path -Path $sdk -ChildPath "bin"
+          $latestSdk = (Get-ChildItem -Path $binDir -Directory | Where-Object { $_.Name -like "10.0.*" } | Sort-Object Name -Descending | Select-Object -First 1).Name
+          $src = Join-Path -Path $binDir -ChildPath "$latestSdk\x64"
+          $dst = Join-Path -Path $binDir -ChildPath "x64"
           
           if (-not (Test-Path $dst)) {
             New-Item -ItemType Directory -Force -Path $dst | Out-Null
