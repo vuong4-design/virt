@@ -167,16 +167,27 @@ jobs:
           $ErrorActionPreference = "Stop"
           $sdl_url = "https://www.libsdl.org/release/SDL-devel-1.2.15-VC.zip"
           
-          # Sử dụng tham số tường minh để tránh lỗi thiếu khoảng trắng
           $sdl_dir = Join-Path -Path $env:RUNNER_TEMP -ChildPath "SDL"
           New-Item -ItemType Directory -Force -Path $sdl_dir | Out-Null
           
           Invoke-WebRequest -Uri $sdl_url -OutFile "$sdl_dir\sdl.zip"
-          Expand-Archive -Path "$sdl_dir\sdl.zip" -DestinationPath $sdl_dir
+          Expand-Archive -Path "$sdl_dir\sdl.zip" -DestinationPath $sdl_dir -Force
           
           $sdl_path = Join-Path -Path $sdl_dir -ChildPath "SDL-1.2.15"
           
-          # Dùng Add-Content thay cho Out-File để tránh lỗi dấu gạch đứng (pipe)
+          # VirtualBox expects SDL.lib directly inside the 'lib' directory.
+          # SDL zip places them inside 'lib/x64'. We move them up.
+          $libDir = Join-Path -Path $sdl_path -ChildPath "lib"
+          $libX64 = Join-Path -Path $libDir -ChildPath "x64"
+          $libX86 = Join-Path -Path $libDir -ChildPath "x86"
+          
+          if (Test-Path $libX64) {
+              Copy-Item -Path "$libX64\*" -Destination $libDir -Force
+              Write-Host "Moved x64 SDL libs to the root of the lib directory."
+          } elseif (Test-Path $libX86) {
+              Copy-Item -Path "$libX86\*" -Destination $libDir -Force
+          }
+          
           Add-Content -Path $env:GITHUB_ENV -Value "VBOX_SDL_PATH=$sdl_path" -Encoding utf8
           Write-Host "Installed libSDL to $sdl_path"
 
@@ -187,22 +198,26 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           $sdk = "C:\Program Files (x86)\Windows Kits\10"
-          
-          # Patch: Copy MIDL.exe and related tools to the unversioned bin folder expected by configure.vbs
           $binDir = Join-Path -Path $sdk -ChildPath "bin"
-          $latestSdk = (Get-ChildItem -Path $binDir -Directory | Where-Object { $_.Name -like "10.0.*" } | Sort-Object Name -Descending | Select-Object -First 1).Name
-          $src = Join-Path -Path $binDir -ChildPath "$latestSdk\x64"
-          $dst = Join-Path -Path $binDir -ChildPath "x64"
           
-          if (-not (Test-Path $dst)) {
-            New-Item -ItemType Directory -Force -Path $dst | Out-Null
-            Copy-Item -Path "$src\*" -Destination $dst -Recurse -Force
-            Write-Host "Copied Midl.exe tools to $dst to bypass configure.vbs path resolution bug"
-          }
+          $latestSdk = (Get-ChildItem -Path $binDir -Directory | Where-Object { $_.Name -like "10.0.*" } | Sort-Object Name -Descending | Select-Object -First 1).Name
+          
+          # Ép copy toàn bộ Midl.exe toolchain từ x64 (bỏ qua bước kiểm tra tồn tại)
+          $srcX64 = Join-Path -Path $binDir -ChildPath "$latestSdk\x64"
+          $dstX64 = Join-Path -Path $binDir -ChildPath "x64"
+          if (-not (Test-Path $dstX64)) { New-Item -ItemType Directory -Force -Path $dstX64 | Out-Null }
+          Copy-Item -Path "$srcX64\*" -Destination $dstX64 -Recurse -Force
+          Write-Host "Copied Midl.exe x64 tools to $dstX64"
+
+          # Ép copy toàn bộ Midl.exe toolchain cho x86 (để đề phòng configure.vbs tìm kiếm)
+          $srcX86 = Join-Path -Path $binDir -ChildPath "$latestSdk\x86"
+          $dstX86 = Join-Path -Path $binDir -ChildPath "x86"
+          if (-not (Test-Path $dstX86)) { New-Item -ItemType Directory -Force -Path $dstX86 | Out-Null }
+          Copy-Item -Path "$srcX86\*" -Destination $dstX86 -Recurse -Force
+          Write-Host "Copied Midl.exe x86 tools to $dstX86"
 
           Write-Host "=== Configure VirtualBox ==="
 
-          # Pass libSDL path to the configure script
           & cscript.exe //nologo configure.vbs "--with-SDK10=$sdk" "--with-libSDL=$env:VBOX_SDL_PATH"
 
           if ($LASTEXITCODE -ne 0) {
