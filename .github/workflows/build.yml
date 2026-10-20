@@ -34,38 +34,34 @@ jobs:
           fetch-depth: 1
           submodules: recursive
        
-      - name: Diagnose kBuild
+      
+      - name: Diagnose kBuild submodule
         shell: pwsh
         run: |
-          $root = Join-Path $env:GITHUB_WORKSPACE "kBuild"
+          Write-Host "=== Git submodule status ==="
+          git submodule status
+          git -C kBuild status --short --branch
+          git -C kBuild log -1 --oneline
 
-          Write-Host "=== kBuild directory ==="
-          if (Test-Path $root) {
-            Get-ChildItem $root -Force |
-              Select-Object Name, Mode
-          } else {
-            throw "kBuild submodule directory does not exist"
-          }
+          Write-Host "`n=== Locate kBuild required files ==="
+          $root = $env:GITHUB_WORKSPACE
 
-          Write-Host "`n=== Required kBuild files ==="
-          $required = @(
-            "footer.kmk",
-            "header.kmk",
-            "rules.kmk",
-            "bin/win.amd64/kmk.exe",
-            "bin/win.amd64/kmk_ash.exe",
-            "bin/win.x86/kmk.exe",
-            "bin/win.x86/kmk_ash.exe"
-          )
+          Get-ChildItem $root -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object {
+              $_.Name -in @(
+                "footer.kmk",
+                "header.kmk",
+                "rules.kmk",
+                "kmk.exe",
+                "kmk_ash.exe"
+              ) -and $_.FullName -match '[\\/]kBuild[\\/]'
+            } |
+            Select-Object -ExpandProperty FullName
 
-          foreach ($file in $required) {
-            $path = Join-Path $root $file
-            if (Test-Path $path) {
-              Write-Host "FOUND: $file"
-            } else {
-              Write-Host "MISSING: $file"
-            }
-          }
+          Write-Host "`n=== Nested kBuild directory ==="
+          Get-ChildItem "$root\kBuild\kBuild" -Force -ErrorAction SilentlyContinue |
+            Select-Object Name, Mode
+
 
       - name: Show source revision
         shell: pwsh
