@@ -129,7 +129,7 @@ jobs:
           Write-Host "Patched line $($idx + 1)."
           Get-Content $file |
             Select-Object -Skip ($idx - 2) -First 5
-            - name: Install Yasm and locate MIDL
+      - name: Install Yasm and locate MIDL
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
