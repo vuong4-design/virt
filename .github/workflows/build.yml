@@ -26,6 +26,9 @@ jobs:
       BUILD_LOG_DIR: ${{ github.workspace }}\build-logs
 
     steps:
+      # --------------------------------------------------
+      # Checkout VirtualBox source and submodules
+      # --------------------------------------------------
       - name: Checkout VirtualBox source
         uses: actions/checkout@v4
         with:
@@ -33,17 +36,19 @@ jobs:
           ref: VBox-7.2
           fetch-depth: 1
           submodules: recursive
-       
-      
-      
-      - name: Diagnose kBuild and configure paths
+
+      # --------------------------------------------------
+      # Diagnose kBuild
+      # --------------------------------------------------
+      - name: Diagnose kBuild submodule
         shell: pwsh
         run: |
           $root = $env:GITHUB_WORKSPACE
           $kb = Join-Path $root "kBuild\kBuild"
 
-          Write-Host "=== Submodule status ==="
+          Write-Host "=== Git submodule status ==="
           git submodule status
+          git -C "$root\kBuild" status --short --branch
           git -C "$root\kBuild" log -1 --oneline
 
           Write-Host "`n=== Check expected kBuild root ==="
@@ -59,28 +64,27 @@ jobs:
 
           foreach ($file in $required) {
             $path = Join-Path $kb $file
+
             if (Test-Path $path) {
               Write-Host "FOUND: $path"
             } else {
-              Write-Host "MISSING: $path"
+              throw "Required kBuild file missing: $path"
             }
           }
 
-          Write-Host "`n=== configure.vbs kBuild detection ==="
+          Write-Host "`n=== kBuild directory contents ==="
+          Get-ChildItem $kb -Force |
+            Select-Object Name, Mode
+
+          Write-Host "`n=== configure.vbs detection logic ==="
           Select-String `
             -Path (Join-Path $root "configure.vbs") `
-            -Pattern "PATH_KBUILD|g_strPathkBuild|footer\.kmk|header\.kmk|kmk\.exe" `
-            -Context 2,3
+            -Pattern "KBUILD_PATH|PATH_KBUILD|footer\.kmk|kmk\.exe" `
+            -Context 2, 3
 
-          Write-Host "`n=== Environment overrides ==="
-          Get-ChildItem Env: |
-            Where-Object {
-              $_.Name -match "KBUILD|KMK"
-            } |
-            Format-Table -AutoSize
-
-
-
+      # --------------------------------------------------
+      # Verify source tree
+      # --------------------------------------------------
       - name: Show source revision
         shell: pwsh
         run: |
@@ -102,19 +106,21 @@ jobs:
             $path = Join-Path $env:VBOX_SOURCE $file
 
             if (-not (Test-Path $path)) {
-              Write-Error "Required source file missing: $file"
-              exit 1
+              throw "Required source file missing: $file"
             }
 
-            Write-Host "Found: $file"
+            Write-Host "FOUND: $path"
           }
 
-          New-Item -ItemType Directory `
+          New-Item `
+            -ItemType Directory `
             -Path $env:BUILD_LOG_DIR `
             -Force | Out-Null
 
+      # --------------------------------------------------
+      # Locate Visual Studio
+      # --------------------------------------------------
       - name: Locate Visual Studio
-        id: vs
         uses: microsoft/setup-msbuild@v2
 
       - name: Locate Visual Studio installation
@@ -137,8 +143,12 @@ jobs:
           }
 
           "VS_INSTALL=$vsInstall" >> $env:GITHUB_ENV
+
           Write-Host "Visual Studio: $vsInstall"
 
+      # --------------------------------------------------
+      # Configure, build and package
+      # --------------------------------------------------
       - name: Build VirtualBox and package installer
         shell: pwsh
         run: |
@@ -148,46 +158,120 @@ jobs:
 
           @'
           @echo off
-          setlocal
+          setlocal EnableExtensions
 
-          echo === Initialize Visual Studio environment ===
+          echo ==========================================
+          echo Initialize Visual Studio environment
+          echo ==========================================
+
           call "%VS_INSTALL%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
           if errorlevel 1 exit /b %errorlevel%
 
-          echo === Enter VirtualBox source directory ===
+          echo.
+          echo ==========================================
+          echo Enter VirtualBox source directory
+          echo ==========================================
+
           cd /d "%VBOX_SOURCE%"
           if errorlevel 1 exit /b %errorlevel%
 
-          echo === Configure VirtualBox ===
+          echo VBOX_SOURCE=%VBOX_SOURCE%
+
+          echo.
+          echo ==========================================
+          echo Set kBuild path
+          echo ==========================================
+
+          set "KBUILD_PATH=%VBOX_SOURCE%\kBuild\kBuild"
+
+          if not exist "%KBUILD_PATH%\footer.kmk" (
+              echo ERROR: footer.kmk not found at "%KBUILD_PATH%"
+              exit /b 10
+          )
+
+          if not exist "%KBUILD_PATH%\header.kmk" (
+              echo ERROR: header.kmk not found at "%KBUILD_PATH%"
+              exit /b 11
+          )
+
+          if not exist "%KBUILD_PATH%\rules.kmk" (
+              echo ERROR: rules.kmk not found at "%KBUILD_PATH%"
+              exit /b 12
+          )
+
+          if not exist "%KBUILD_PATH%\bin\win.amd64\kmk.exe" (
+              echo ERROR: kmk.exe not found in win.amd64
+              exit /b 13
+          )
+
+          if not exist "%KBUILD_PATH%\bin\win.amd64\kmk_ash.exe" (
+              echo ERROR: kmk_ash.exe not found in win.amd64
+              exit /b 14
+          )
+
+          echo KBUILD_PATH=%KBUILD_PATH%
+
+          echo.
+          echo ==========================================
+          echo Configure VirtualBox
+          echo ==========================================
+
           cscript //nologo configure.vbs
           if errorlevel 1 exit /b %errorlevel%
 
-          echo === Check generated build environment ===
+          echo.
+          echo ==========================================
+          echo Check generated environment
+          echo ==========================================
+
           if not exist env.bat (
-            echo ERROR: configure.vbs did not generate env.bat
-            exit /b 2
+              echo ERROR: configure.vbs did not generate env.bat
+              exit /b 20
           )
 
-          echo === Load build environment ===
+          echo.
+          echo ==========================================
+          echo Load build environment
+          echo ==========================================
+
           call env.bat
           if errorlevel 1 exit /b %errorlevel%
 
-          echo === Locate kmk ===
+          echo.
+          echo ==========================================
+          echo Verify kmk
+          echo ==========================================
+
           where kmk
           if errorlevel 1 (
-            echo ERROR: kmk was not found in PATH
-            exit /b 3
+              echo ERROR: kmk was not found in PATH
+              exit /b 21
           )
 
-          echo === Build VirtualBox ===
+          kmk --version
+          if errorlevel 1 exit /b %errorlevel%
+
+          echo.
+          echo ==========================================
+          echo Build VirtualBox
+          echo ==========================================
+
           kmk
           if errorlevel 1 exit /b %errorlevel%
 
-          echo === Package VirtualBox ===
+          echo.
+          echo ==========================================
+          echo Package VirtualBox
+          echo ==========================================
+
           kmk packing
           if errorlevel 1 exit /b %errorlevel%
 
-          echo === Build completed ===
+          echo.
+          echo ==========================================
+          echo Build completed successfully
+          echo ==========================================
+
           exit /b 0
           '@ | Set-Content -Path $buildScript -Encoding ASCII
 
@@ -204,25 +288,30 @@ jobs:
             -Wait `
             -PassThru
 
-          Write-Host "`n=== Build stdout (last 100 lines) ==="
+          Write-Host "`n=== Build stdout (last 150 lines) ==="
+
           if (Test-Path $stdoutLog) {
-            Get-Content $stdoutLog -Tail 100
+            Get-Content $stdoutLog -Tail 150
           }
 
-          Write-Host "`n=== Build stderr (last 100 lines) ==="
+          Write-Host "`n=== Build stderr (last 150 lines) ==="
+
           if (Test-Path $stderrLog) {
-            Get-Content $stderrLog -Tail 100
+            Get-Content $stderrLog -Tail 150
           }
 
           if ($process.ExitCode -ne 0) {
-            throw "VirtualBox build failed with exit code $($process.ExitCode). Check the build logs."
+            throw "VirtualBox build failed with exit code $($process.ExitCode). See build logs."
           }
 
+      # --------------------------------------------------
+      # Find generated installer files
+      # --------------------------------------------------
       - name: Find generated installer files
         if: success()
         shell: pwsh
         run: |
-          Write-Host "Searching for installer files..."
+          Write-Host "=== Searching for installer files ==="
 
           $installers = Get-ChildItem `
             -Path $env:VBOX_SOURCE `
@@ -235,11 +324,15 @@ jobs:
 
           if (-not $installers) {
             Write-Warning "No .exe or .msi files were found."
-            Write-Host "The packaging target may use a different output location or target."
           } else {
-            $installers | Select-Object FullName, Length
+            $installers |
+              Select-Object FullName, Length |
+              Format-Table -AutoSize
           }
 
+      # --------------------------------------------------
+      # Upload build logs, including failed builds
+      # --------------------------------------------------
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -249,6 +342,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # --------------------------------------------------
+      # Upload installer artifacts
+      # --------------------------------------------------
       - name: Upload installer artifacts
         if: success()
         uses: actions/upload-artifact@v4
