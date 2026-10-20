@@ -82,6 +82,52 @@ jobs:
             -Pattern "KBUILD_PATH|PATH_KBUILD|footer\.kmk|kmk\.exe" `
             -Context 2, 3
        
+      - name: Inspect installed Windows SDK and WDK
+        shell: pwsh
+        run: |
+          $kits = "C:\Program Files (x86)\Windows Kits\10"
+
+          Write-Host "=== SDK versions ==="
+
+          foreach ($folder in @("Include", "Lib", "bin", "build")) {
+            $path = Join-Path $kits $folder
+
+            Write-Host "`n--- $path ---"
+
+            if (Test-Path $path) {
+              Get-ChildItem $path -Directory -ErrorAction SilentlyContinue |
+                Select-Object -ExpandProperty Name
+            }
+          }
+
+          Write-Host "`n=== WDK indicators ==="
+
+          $patterns = @(
+            "WindowsDriver.KernelMode",
+            "WindowsDriver.UserMode",
+            "WindowsDriver",
+            "WDK"
+          )
+
+          foreach ($pattern in $patterns) {
+            Write-Host "`n--- $pattern ---"
+
+            Get-ChildItem `
+              "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer" `
+              -Filter "*.json" `
+              -Recurse `
+              -ErrorAction SilentlyContinue |
+              Select-Object -First 5 -ExpandProperty FullName
+          }
+
+          Write-Host "`n=== Driver build tools ==="
+
+          Get-ChildItem $kits -Filter "rc.exe" -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 10 -ExpandProperty FullName
+
+          Get-ChildItem $kits -Filter "ntddk.h" -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 10 -ExpandProperty FullName
+
       - name: Diagnose Windows DDK and WDK
         shell: pwsh
         run: |
