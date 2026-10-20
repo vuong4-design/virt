@@ -166,14 +166,18 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $sdl_url = "https://www.libsdl.org/release/SDL-devel-1.2.15-VC.zip"
-          $sdl_dir = Join-Path$env:RUNNER_TEMP "SDL"
+          
+          # Sử dụng tham số tường minh để tránh lỗi thiếu khoảng trắng
+          $sdl_dir = Join-Path -Path $env:RUNNER_TEMP -ChildPath "SDL"
           New-Item -ItemType Directory -Force -Path $sdl_dir | Out-Null
           
           Invoke-WebRequest -Uri $sdl_url -OutFile "$sdl_dir\sdl.zip"
           Expand-Archive -Path "$sdl_dir\sdl.zip" -DestinationPath $sdl_dir
           
-          $sdl_path = Join-Path$sdl_dir "SDL-1.2.15"
-          Write-Host "VBOX_SDL_PATH=$sdl_path" \vert{} Out-File -FilePath $env:GITHUB_ENV -Append
+          $sdl_path = Join-Path -Path $sdl_dir -ChildPath "SDL-1.2.15"
+          
+          # Dùng Add-Content thay cho Out-File để tránh lỗi dấu gạch đứng (pipe)
+          Add-Content -Path $env:GITHUB_ENV -Value "VBOX_SDL_PATH=$sdl_path" -Encoding utf8
           Write-Host "Installed libSDL to $sdl_path"
 
       - name: Configure VirtualBox
