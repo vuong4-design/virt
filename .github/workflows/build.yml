@@ -1,11 +1,11 @@
 
-name: Build VirtualBox Windows Installer
+name: Build VirtualBox Windows MSI
 
 on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "VirtualBox source branch, tag, or commit"
+        description: "VirtualBox branch, tag, or commit"
         required: true
         default: "main"
         type: string
@@ -18,113 +18,178 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 360
 
+    defaults:
+      run:
+        shell: pwsh
+
     env:
-      VBOX_BUILD_TYPE: release
-      VBOX_TARGET_ARCH: amd64
+      VBOX_SOURCE: ${{ github.workspace }}\virtualbox
+      BUILD_TYPE: release
 
     steps:
-      - name: Checkout VirtualBox source
+      - name: Checkout official VirtualBox source
         uses: actions/checkout@v4
         with:
           repository: VirtualBox/virtualbox
           ref: ${{ inputs.ref }}
           path: virtualbox
-          submodules: recursive
           fetch-depth: 1
 
-      - name: Locate Visual Studio
-        id: vs
-        shell: pwsh
+      - name: Prepare logs
         run: |
+          New-Item -ItemType Directory -Force `
+            "$env:GITHUB_WORKSPACE\build-logs" | Out-Null
+
+      - name: Verify source tree
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repo = $env:VBOX_SOURCE
+
+          if (!(Test-Path "$repo\.git")) {
+            throw "Git repository not found: $repo"
+          }
+
+          git -C $repo rev-parse HEAD |
+            Tee-Object "$env:GITHUB_WORKSPACE\build-logs\commit.txt"
+
+          Write-Host "Repository root:"
+          Get-ChildItem $repo -Force |
+            Select-Object Mode, Name |
+            Format-Table -AutoSize
+
+          $required = @(
+            "configure.py",
+            "configure.ps1",
+            "Config.kmk",
+            "README.md"
+          )
+
+          foreach ($file in $required) {
+            if (!(Test-Path (Join-Path $repo $file))) {
+              throw "Required source file missing: $file"
+            }
+          }
+
+      - name: Locate Visual Studio
+        run: |
+          $ErrorActionPreference = "Stop"
+
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 
           if (!(Test-Path $vswhere)) {
-            throw "vswhere.exe not found"
+            throw "vswhere.exe is missing"
           }
 
           $vs = & $vswhere -latest -products '*' `
             -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
             -property installationPath
 
-          if (!$vs -or !(Test-Path "$vs\Common7\Tools\VsDevCmd.bat")) {
-            throw "Visual Studio C++ build tools not found"
+          if (!$vs) {
+            throw "Visual Studio C++ x64 tools are not installed"
+          }
+
+          $vs = $vs.Trim()
+
+          if (!(Test-Path "$vs\Common7\Tools\VsDevCmd.bat")) {
+            throw "VsDevCmd.bat not found"
           }
 
           "VS_INSTALL=$vs" >> $env:GITHUB_ENV
-          "Visual Studio: $vs"
 
-      - name: Check prerequisites
-        shell: pwsh
-        run: |
+          Write-Host "Visual Studio: $vs"
           python --version
           git --version
 
-          Get-ChildItem Env: |
-            Where-Object Name -Match '^(VSCMD|VSINSTALLDIR|WindowsSdkDir)'
-
-          $vs = $env:VS_INSTALL
-          if (!(Test-Path "$vs\VC\Auxiliary\Build\vcvarsall.bat")) {
-            throw "Visual C++ environment is incomplete"
-          }
-
-          Get-PSDrive -Name C
-
-      - name: Configure and build MSI
-        shell: pwsh
+      - name: Configure VirtualBox
         run: |
           $ErrorActionPreference = "Stop"
-          $repo = Join-Path $env:GITHUB_WORKSPACE "virtualbox"
-          $log = Join-Path $env:GITHUB_WORKSPACE "build-logs"
-          New-Item -ItemType Directory -Force $log | Out-Null
+          $repo = $env:VBOX_SOURCE
+          $logs = "$env:GITHUB_WORKSPACE\build-logs"
+
+          $script = Join-Path $repo "configure.ps1"
+
+          if (!(Test-Path $script)) {
+            throw "configure.ps1 does not exist"
+          }
+
+          Push-Location $repo
+          try {
+            & $script 2>&1 |
+              Tee-Object "$logs\configure.log"
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "configure.ps1 failed: exit $LASTEXITCODE"
+            }
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Initialize Visual Studio and build
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repo = $env:VBOX_SOURCE
+          $logs = "$env:GITHUB_WORKSPACE\build-logs"
 
           @'
           @echo off
           setlocal
+
           call "%VS_INSTALL%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
           if errorlevel 1 exit /b %errorlevel%
 
-          cd /d "%GITHUB_WORKSPACE%\virtualbox"
+          cd /d "%VBOX_SOURCE%"
           if errorlevel 1 exit /b %errorlevel%
 
-          python configure.py
-          if errorlevel 1 exit /b %errorlevel%
+          echo ===== Source root =====
+          dir
 
+          echo ===== Locate kmk =====
           where kmk
           if errorlevel 1 (
-            echo ERROR: kmk was not found after configuration.
-            echo Install or fetch the toolchain required by this source revision.
-            exit /b 1
+              echo ERROR: kmk not found after configuration.
+              exit /b 10
           )
 
+          echo ===== Build VirtualBox =====
           kmk KBUILD_TYPE=release
           if errorlevel 1 exit /b %errorlevel%
 
+          echo ===== Package Windows installer =====
           kmk KBUILD_TYPE=release packing
           if errorlevel 1 exit /b %errorlevel%
 
           exit /b 0
-          '@ | Set-Content -Encoding ASCII "$log\build.cmd"
+          '@ | Set-Content -Encoding ASCII "$logs\build.cmd"
 
-          $process = Start-Process -FilePath "cmd.exe" `
-            -ArgumentList @("/d", "/c", "`"$log\build.cmd`"") `
-            -NoNewWindow -Wait -PassThru `
-            -RedirectStandardOutput "$log\stdout.log" `
-            -RedirectStandardError "$log\stderr.log"
+          $proc = Start-Process -FilePath "cmd.exe" `
+            -ArgumentList @(
+              "/d", "/c",
+              "`"$logs\build.cmd`""
+            ) `
+            -WorkingDirectory $repo `
+            -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput "$logs\build.stdout.log" `
+            -RedirectStandardError "$logs\build.stderr.log"
 
-          Get-Content "$log\stdout.log" -Tail 100
-          Get-Content "$log\stderr.log" -Tail 100
+          Get-Content "$logs\build.stdout.log" -Tail 120 `
+            -ErrorAction SilentlyContinue
 
-          if ($process.ExitCode -ne 0) {
-            throw "VirtualBox build failed with exit code $($process.ExitCode)"
+          Get-Content "$logs\build.stderr.log" -Tail 120 `
+            -ErrorAction SilentlyContinue
+
+          if ($proc.ExitCode -ne 0) {
+            throw "Build/package failed: exit $($proc.ExitCode)"
           }
 
-      - name: Collect installer and build metadata
+      - name: Collect MSI and installer files
         if: always()
-        shell: pwsh
         run: |
-          $repo = Join-Path $env:GITHUB_WORKSPACE "virtualbox"
-          $dest = Join-Path $env:GITHUB_WORKSPACE "artifacts"
-          New-Item -ItemType Directory -Force $dest | Out-Null
+          $repo = $env:VBOX_SOURCE
+          $dest = "$env:GITHUB_WORKSPACE\artifacts"
+
+          New-Item -ItemType Directory -Force $dest |
+            Out-Null
 
           $roots = @(
             "$repo\out\win.amd64\release\bin",
@@ -138,30 +203,35 @@ jobs:
                   $_.Extension -in @(".msi", ".exe", ".cab") -and
                   $_.Name -like "VirtualBox*"
                 } |
-                Copy-Item -Destination $dest -Force
+                ForEach-Object {
+                  Copy-Item $_.FullName $dest -Force
+                }
             }
+          }
+
+          $msi = Get-ChildItem $dest -Filter "*.msi" `
+            -File -ErrorAction SilentlyContinue
+
+          if (!$msi) {
+            Write-Warning "No MSI produced. Review build logs."
+          } else {
+            $msi | Select-Object Name, Length, FullName |
+              Format-Table -AutoSize
           }
 
           git -C $repo rev-parse HEAD |
             Set-Content "$dest\source-commit.txt"
 
-          git -C $repo status --short |
-            Set-Content "$dest\source-status.txt"
-
-          if (!(Get-ChildItem $dest -Filter "*.msi" -File)) {
-            Write-Warning "No MSI found. Check build logs and packaging prerequisites."
-          }
-
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: virtualbox-windows-build-logs
+          name: virtualbox-build-logs
           path: build-logs/
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Upload installer artifacts
+      - name: Upload Windows installer
         if: always()
         uses: actions/upload-artifact@v4
         with:
