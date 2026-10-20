@@ -86,49 +86,34 @@ jobs:
       - name: Patch legacy DDK 7.1 check
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          $file = Join-Path$env:VBOX_SOURCE "configure.vbs"
+          $ErrorActionPreference = "Stop";
+          $file = "$env:VBOX_SOURCE\configure.vbs";
 
           if (-not (Test-Path $file)) {
-            throw "configure.vbs not found: $file"
+            throw "configure.vbs not found: $file";
           }
 
-          $lines = [System.IO.File]::ReadAllLines($file)$matches = @()
+          # Sử dụng dấu chấm phẩy (;) để ngăn lỗi dính dòng khi copy/paste
+          $lines = [System.IO.File]::ReadAllLines($file);
+          $matches = @();
 
           for ($i = 2000; $i -lt $lines.Length; $i++) {
-            if (
-              $lines[$i].Contains("CheckForWinDDK") -and
-              $lines[$i].Contains("strOptDDK") -and
-              $lines[$i] -notmatch '^\s*(sub|function)\b'
-            ) {
-              $matches +=$i
+            if ($lines[$i].Contains("CheckForWinDDK") -and $lines[$i].Contains("strOptDDK") -and $lines[$i] -notmatch '^\s*(sub|function)\b') {
+              $matches += $i;
             }
           }
 
           if ($matches.Count -ne 1) {
-            Write-Host "Matching lines:"
-            Select-String -Path $file -Pattern "CheckForWinDDK" |
-              ForEach-Object {
-                Write-Host "$($_.LineNumber): $($_.Line)"
-              }
-
-            throw "Expected one DDK check call; found $($matches.Count)."
+            throw "Expected one DDK check call; found $($matches.Count).";
           }
 
-          $idx =$matches[0]
-          Write-Host "Original line $($idx + 1):$($lines[$idx])"
+          $idx = $matches[0];
+          Write-Host "Original line $($idx + 1): $($lines[$idx])";
 
-          $lines[$idx] =
-            "    ' Experimental: skip legacy DDK 7.1 configure check"
+          $lines[$idx] = "    ' Experimental: skip legacy DDK 7.1 configure check";
 
-          [System.IO.File]::WriteAllLines(
-            $file,$lines,
-            [System.Text.UTF8Encoding]::new($false)
-          )
-
-          Write-Host "Patched line $($idx + 1)."
-          Get-Content $file |
-            Select-Object -Skip ($idx - 2) -First 5
+          [System.IO.File]::WriteAllLines($file, $lines, [System.Text.UTF8Encoding]::new($false));
+          Write-Host "Patched line $($idx + 1).";
 
       - name: Install Yasm runtime and verify
         shell: pwsh
