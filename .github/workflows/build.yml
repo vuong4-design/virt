@@ -29,6 +29,7 @@ jobs:
       - name: Checkout VirtualBox source
         uses: actions/checkout@v4
         with:
+          repository: VirtualBox/virtualbox
           ref: VBox-7.2
           fetch-depth: 1
           submodules: recursive
