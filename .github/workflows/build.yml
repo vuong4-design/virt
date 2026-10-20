@@ -35,32 +35,50 @@ jobs:
           submodules: recursive
        
       
-      - name: Diagnose kBuild submodule
+      
+      - name: Diagnose kBuild and configure paths
         shell: pwsh
         run: |
-          Write-Host "=== Git submodule status ==="
-          git submodule status
-          git -C kBuild status --short --branch
-          git -C kBuild log -1 --oneline
-
-          Write-Host "`n=== Locate kBuild required files ==="
           $root = $env:GITHUB_WORKSPACE
+          $kb = Join-Path $root "kBuild\kBuild"
 
-          Get-ChildItem $root -Recurse -File -ErrorAction SilentlyContinue |
+          Write-Host "=== Submodule status ==="
+          git submodule status
+          git -C "$root\kBuild" log -1 --oneline
+
+          Write-Host "`n=== Check expected kBuild root ==="
+          Write-Host "Candidate: $kb"
+
+          $required = @(
+            "footer.kmk",
+            "header.kmk",
+            "rules.kmk",
+            "bin\win.amd64\kmk.exe",
+            "bin\win.amd64\kmk_ash.exe"
+          )
+
+          foreach ($file in $required) {
+            $path = Join-Path $kb $file
+            if (Test-Path $path) {
+              Write-Host "FOUND: $path"
+            } else {
+              Write-Host "MISSING: $path"
+            }
+          }
+
+          Write-Host "`n=== configure.vbs kBuild detection ==="
+          Select-String `
+            -Path (Join-Path $root "configure.vbs") `
+            -Pattern "PATH_KBUILD|g_strPathkBuild|footer\.kmk|header\.kmk|kmk\.exe" `
+            -Context 2,3
+
+          Write-Host "`n=== Environment overrides ==="
+          Get-ChildItem Env: |
             Where-Object {
-              $_.Name -in @(
-                "footer.kmk",
-                "header.kmk",
-                "rules.kmk",
-                "kmk.exe",
-                "kmk_ash.exe"
-              ) -and $_.FullName -match '[\\/]kBuild[\\/]'
+              $_.Name -match "KBUILD|KMK"
             } |
-            Select-Object -ExpandProperty FullName
+            Format-Table -AutoSize
 
-          Write-Host "`n=== Nested kBuild directory ==="
-          Get-ChildItem "$root\kBuild\kBuild" -Force -ErrorAction SilentlyContinue |
-            Select-Object Name, Mode
 
 
       - name: Show source revision
