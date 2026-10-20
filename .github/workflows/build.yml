@@ -130,27 +130,48 @@ jobs:
           Get-Content $file |
             Select-Object -Skip ($idx - 2) -First 5
       
+      
       - name: Install Yasm 1.3.0
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          $url = "https://github.com/yasm/yasm/releases/download/v1.3.0/yasm-1.3.0-win32.exe"
+          $url = "https://github.com/yasm/yasm/releases/download/v1.3.0/yasm-1.3.0-win64.exe"
           $dir = Join-Path $env:RUNNER_TEMP "yasm"
           $exe = Join-Path $dir "yasm.exe"
 
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
+          Write-Host "Downloading Yasm from: $url"
           Invoke-WebRequest -Uri $url -OutFile $exe
 
-          $version = & $exe --version 2>&1
-          $version | Write-Host
+          if (-not (Test-Path $exe)) {
+            throw "Yasm download did not produce an executable."
+          }
 
-          if ($LASTEXITCODE -ne 0 -or
-              ($version -join "`n") -notmatch 'yasm 1\.3\.0') {
-            throw "Yasm 1.3.0 verification failed."
+          $item = Get-Item $exe
+          Write-Host "Downloaded size: $($item.Length) bytes"
+
+          if ($item.Length -lt 100000) {
+            throw "Downloaded file is unexpectedly small."
+          }
+
+          Write-Host "=== Yasm version output ==="
+          $output = & $exe --version 2>&1
+          $exitCode = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host "$_" }
+
+          if ($exitCode -ne 0) {
+            throw "Yasm executable returned exit code $exitCode."
+          }
+
+          if (($output -join "`n") -notmatch 'yasm\s+1\.3\.0') {
+            throw "Expected Yasm 1.3.0; inspect the version output above."
           }
 
           $dir | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+          Write-Host "Yasm 1.3.0 installed successfully."
+
 
           
       - name: Configure VirtualBox
