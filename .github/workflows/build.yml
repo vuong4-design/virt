@@ -241,7 +241,6 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          # Nối chuỗi trực tiếp để tránh hoàn toàn lỗi mất dấu cách của Join-Path
           $kmk = "$env:KBUILD_PATH\bin\win.amd64\kmk.exe"
 
           if (-not (Test-Path $kmk)) {
@@ -250,11 +249,13 @@ jobs:
 
           $jobs = [Environment]::ProcessorCount
           Write-Host "Build jobs: $jobs"
-          Write-Host "Building without Guest Additions..."
+          Write-Host "Building without Guest Additions and Hardening..."
 
+          # Thêm VBOX_WITH_HARDENING= để tắt yêu cầu code signing
           & $kmk "-j$jobs" `
             "VBOX_WITHOUT_ADDITIONS=1" `
-            "VBOX_WITH_ADDITIONS_PACKING="
+            "VBOX_WITH_ADDITIONS_PACKING=" `
+            "VBOX_WITH_HARDENING="
 
           if ($LASTEXITCODE -ne 0) {
             throw "kmk build failed with exit code $LASTEXITCODE."
