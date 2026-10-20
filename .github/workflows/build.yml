@@ -1,4 +1,3 @@
-
 name: Build VirtualBox 7.2 (Windows x64)
 
 on:
@@ -129,9 +128,7 @@ jobs:
           Write-Host "Patched line $($idx + 1)."
           Get-Content $file |
             Select-Object -Skip ($idx - 2) -First 5
-      
-      
-      
+
       - name: Install Yasm runtime and verify
         shell: pwsh
         run: |
@@ -160,12 +157,24 @@ jobs:
             throw "Expected Yasm 1.3.0."
           }
 
-          $dir | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+          $dir \vert{} Out-File$env:GITHUB_PATH -Append -Encoding utf8
           Write-Host "Yasm 1.3.0 is ready."
 
-
-
+      - name: Setup libSDL
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $sdl_url = "https://www.libsdl.org/release/SDL-devel-1.2.15-VC.zip"
+          $sdl_dir = Join-Path$env:RUNNER_TEMP "SDL"
+          New-Item -ItemType Directory -Force -Path $sdl_dir | Out-Null
           
+          Invoke-WebRequest -Uri $sdl_url -OutFile "$sdl_dir\sdl.zip"
+          Expand-Archive -Path "$sdl_dir\sdl.zip" -DestinationPath $sdl_dir
+          
+          $sdl_path = Join-Path$sdl_dir "SDL-1.2.15"
+          Write-Host "VBOX_SDL_PATH=$sdl_path" \vert{} Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Installed libSDL to $sdl_path"
+
       - name: Configure VirtualBox
         shell: pwsh
         working-directory: ${{ github.workspace }}
@@ -173,10 +182,23 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           $sdk = "C:\Program Files (x86)\Windows Kits\10"
+          
+          # Patch: Copy MIDL.exe and related tools to the unversioned bin folder expected by configure.vbs
+          $binDir = Join-Path$sdk "bin"
+          $latestSdk = (Get-ChildItem -Path $binDir -Directory \vert{} Where-Object {$_.Name -like "10.0.*" } | Sort-Object Name -Descending | Select-Object -First 1).Name
+          $src = Join-Path $binDir "$latestSdk\x64"
+          $dst = Join-Path$binDir "x64"
+          
+          if (-not (Test-Path $dst)) {
+            New-Item -ItemType Directory -Force -Path $dst | Out-Null
+            Copy-Item -Path "$src\*" -Destination $dst -Recurse -Force
+            Write-Host "Copied Midl.exe tools to $dst to bypass configure.vbs path resolution bug"
+          }
 
           Write-Host "=== Configure VirtualBox ==="
 
-          & cscript.exe //nologo configure.vbs "--with-SDK10=$sdk"
+          # Pass libSDL path to the configure script
+          & cscript.exe //nologo configure.vbs "--with-SDK10=$sdk" "--with-libSDL=$env:VBOX_SDL_PATH"
 
           if ($LASTEXITCODE -ne 0) {
             Write-Host "=== configure.log (last 200 lines) ==="
@@ -199,7 +221,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $kmk = Join-Path $env:KBUILD_PATH "bin\win.amd64\kmk.exe"
+          $kmk = Join-Path$env:KBUILD_PATH "bin\win.amd64\kmk.exe"
 
           if (-not (Test-Path $kmk)) {
             throw "kmk.exe not found: $kmk"
