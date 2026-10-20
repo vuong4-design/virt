@@ -241,7 +241,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $kmk = Join-Path$env:KBUILD_PATH "bin\win.amd64\kmk.exe"
+          # Sử dụng tham số tường minh để tránh lỗi dính chữ
+          $kmk = Join-Path -Path$env:KBUILD_PATH -ChildPath "bin\win.amd64\kmk.exe"
 
           if (-not (Test-Path $kmk)) {
             throw "kmk.exe not found: $kmk"
