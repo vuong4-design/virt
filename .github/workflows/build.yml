@@ -118,32 +118,37 @@ jobs:
       - name: Install Yasm runtime and verify
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
+          $ErrorActionPreference = "Stop";
 
-          choco install vcredist2010 -y --no-progress
+          choco install vcredist2010 -y --no-progress;
 
-          $url = "https://github.com/yasm/yasm/releases/download/v1.3.0/yasm-1.3.0-win64.exe"
-          $dir = Join-Path$env:RUNNER_TEMP "yasm"
-          $exe = Join-Path$dir "yasm.exe"
+          $url = "https://github.com/yasm/yasm/releases/download/v1.3.0/yasm-1.3.0-win64.exe";
+          # Sử dụng nối chuỗi trực tiếp để tránh lỗi Join-Path
+          $dir = "$env:RUNNER_TEMP\yasm";
+          $exe = "$dir\yasm.exe";
 
-          New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          Invoke-WebRequest -Uri $url -OutFile$exe
+          # Gán biến $null thay vì dùng dấu pipe (| Out-Null)
+          $null = New-Item -ItemType Directory -Force -Path $dir;
+          Invoke-WebRequest -Uri $url -OutFile $exe;
 
-          Write-Host "=== Yasm version ==="
-          $output = &$exe --version 2>&1
-          $exitCode =$LASTEXITCODE
-          $output \vert{} ForEach-Object { Write-Host "$_" }
+          Write-Host "=== Yasm version ===";
+          $output = & $exe --version 2>&1;
+          $exitCode = $LASTEXITCODE;
+          
+          # Dùng vòng lặp foreach thay vì dùng dấu pipe (| ForEach-Object)
+          foreach ($line in $output) { Write-Host $line }
 
           if ($exitCode -ne 0) {
-            throw "Yasm failed to start (exit code $exitCode). Check missing DLL dependencies."
+            throw "Yasm failed to start (exit code $exitCode). Check missing DLL dependencies.";
           }
 
-          if (($output -join "`n") -notmatch 'yasm\s+1\.3\.0') {
-            throw "Expected Yasm 1.3.0."
+          $joinedOutput = $output -join "`n";
+          if ($joinedOutput -notmatch 'yasm\s+1\.3\.0') {
+            throw "Expected Yasm 1.3.0.";
           }
 
-          Add-Content -Path $env:GITHUB_PATH -Value $dir -Encoding utf8
-          Write-Host "Yasm 1.3.0 is ready."
+          Add-Content -Path $env:GITHUB_PATH -Value $dir -Encoding utf8;
+          Write-Host "Yasm 1.3.0 is ready.";
 
       # BƯỚC MỚI: Cài đặt Qt5 để biên dịch giao diện VirtualBox.exe
       - name: Install Qt 5
