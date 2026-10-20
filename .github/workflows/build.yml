@@ -249,13 +249,16 @@ jobs:
 
           $jobs = [Environment]::ProcessorCount
           Write-Host "Build jobs: $jobs"
-          Write-Host "Building without Guest Additions and Hardening..."
+          Write-Host "Building without Guest Additions, Hardening, NLS, GUI, and Warnings as errors..."
 
-          # Thêm VBOX_WITH_HARDENING= để tắt yêu cầu code signing
+          # Thêm các tham số vô hiệu hóa Qt, NLS và chặn Warnings = Errors
           & $kmk "-j$jobs" `
             "VBOX_WITHOUT_ADDITIONS=1" `
             "VBOX_WITH_ADDITIONS_PACKING=" `
-            "VBOX_WITH_HARDENING="
+            "VBOX_WITH_HARDENING=" `
+            "VBOX_WITH_QTGUI=" `
+            "VBOX_WITH_NLS=" `
+            "VBOX_WITH_WARNINGS_AS_ERRORS="
 
           if ($LASTEXITCODE -ne 0) {
             throw "kmk build failed with exit code $LASTEXITCODE."
