@@ -151,13 +151,13 @@ jobs:
           Write-Host "Yasm 1.3.0 is ready.";
 
       # BƯỚC MỚI: Cài đặt Qt5 để biên dịch giao diện VirtualBox.exe
-      # 1. Cài đặt Qt6 (qtsvg và qttools đã có sẵn trong gói mặc định, chỉ cần cài thêm qt5compat)
+      # 1. Cài đặt Qt6 (thêm qtscxml để có thư viện Qt6StateMachine.lib cho UICommon.dll)
       - name: Install Qt 6
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.5.3'
           arch: 'win64_msvc2019_64'
-          modules: 'qt5compat'
+          modules: 'qt5compat qtscxml'
           cache: true
 
       - name: Setup libSDL
