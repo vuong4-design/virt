@@ -277,3 +277,13 @@ jobs:
             env.bat
             *.log
             out/**/*.log
+      - name: Upload VirtualBox Binaries
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtualbox-7.2-windows-amd64-binaries
+          if-no-files-found: error
+          path: |
+            out/win.amd64/release/bin/
+            !out/win.amd64/release/bin/**/*.obj
+            !out/win.amd64/release/bin/**/*.pdb
