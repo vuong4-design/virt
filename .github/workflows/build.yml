@@ -151,102 +151,137 @@ jobs:
           Write-Host "Yasm 1.3.0 is ready.";
 
       # BƯỚC MỚI: Cài đặt Qt5 để biên dịch giao diện VirtualBox.exe
-      - name: Install Qt 5
+      # 1. Cài đặt Qt6 (bao gồm qttools để có lrelease.exe cho NLS)
+      - name: Install Qt 6
         uses: jurplel/install-qt-action@v4
         with:
-          version: '5.15.2'
+          version: '6.5.3'
           arch: 'win64_msvc2019_64'
+          modules: 'qttools'
           cache: true
 
       - name: Setup libSDL
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          $sdl_url = "https://www.libsdl.org/release/SDL-devel-1.2.15-VC.zip"
+          $ErrorActionPreference = "Stop";
+          $sdl_url = "https://www.libsdl.org/release/SDL-devel-1.2.15-VC.zip";
+          $sdl_dir = "$env:RUNNER_TEMP\SDL";
+          $null = New-Item -ItemType Directory -Force -Path $sdl_dir;
           
-          $sdl_dir = Join-Path -Path $env:RUNNER_TEMP -ChildPath "SDL"
-          New-Item -ItemType Directory -Force -Path $sdl_dir | Out-Null
+          Invoke-WebRequest -Uri $sdl_url -OutFile "$sdl_dir\sdl.zip";
+          Expand-Archive -Path "$sdl_dir\sdl.zip" -DestinationPath $sdl_dir -Force;
           
-          Invoke-WebRequest -Uri $sdl_url -OutFile "$sdl_dir\sdl.zip"
-          Expand-Archive -Path "$sdl_dir\sdl.zip" -DestinationPath $sdl_dir -Force
-          
-          $sdl_path = Join-Path -Path $sdl_dir -ChildPath "SDL-1.2.15"
-          
-          $libDir = Join-Path -Path $sdl_path -ChildPath "lib"
-          $libX64 = Join-Path -Path $libDir -ChildPath "x64"
-          $libX86 = Join-Path -Path $libDir -ChildPath "x86"
+          $sdl_path = "$sdl_dir\SDL-1.2.15";
+          $libDir = "$sdl_path\lib";
+          $libX64 = "$libDir\x64";
           
           if (Test-Path $libX64) {
-              Copy-Item -Path "$libX64\*" -Destination $libDir -Force
-          } elseif (Test-Path $libX86) {
-              Copy-Item -Path "$libX86\*" -Destination $libDir -Force
+            Copy-Item -Path "$libX64\*" -Destination $libDir -Force;
           }
           
-          Add-Content -Path $env:GITHUB_ENV -Value "VBOX_SDL_PATH=$sdl_path" -Encoding utf8
-          Write-Host "Installed libSDL to $sdl_path"
+          Add-Content -Path $env:GITHUB_ENV -Value "VBOX_SDL_PATH=$sdl_path" -Encoding utf8;
+          Write-Host "Installed libSDL to $sdl_path";
 
       - name: Configure VirtualBox
         shell: pwsh
         working-directory: ${{ github.workspace }}
         run: |
-          $ErrorActionPreference = "Stop"
+          $ErrorActionPreference = "Stop";
 
-          $sdk = "C:\Program Files (x86)\Windows Kits\10"
-          $binDir = Join-Path -Path $sdk -ChildPath "bin"
+          $sdk = "C:\Program Files (x86)\Windows Kits\10";
+          $binDir = "$sdk\bin";
           
-          $latestSdk = (Get-ChildItem -Path $binDir -Directory | Where-Object { $_.Name -like "10.0.*" } | Sort-Object Name -Descending | Select-Object -First 1).Name
+          $latestSdk = (Get-ChildItem -Path $binDir -Directory | Where-Object { $_.Name -like "10.0.*" } | Sort-Object Name -Descending | Select-Object -First 1).Name;
           
-          $srcX64 = Join-Path -Path $binDir -ChildPath "$latestSdk\x64"
-          $dstX64 = Join-Path -Path $binDir -ChildPath "x64"
-          if (-not (Test-Path $dstX64)) { New-Item -ItemType Directory -Force -Path $dstX64 | Out-Null }
-          Copy-Item -Path "$srcX64\*" -Destination $dstX64 -Recurse -Force
+          $srcX64 = "$binDir\$latestSdk\x64";
+          $dstX64 = "$binDir\x64";
+          if (-not (Test-Path $dstX64)) { $null = New-Item -ItemType Directory -Force -Path $dstX64; }
+          Copy-Item -Path "$srcX64\*" -Destination $dstX64 -Recurse -Force;
 
-          $srcX86 = Join-Path -Path $binDir -ChildPath "$latestSdk\x86"
-          $dstX86 = Join-Path -Path $binDir -ChildPath "x86"
-          if (-not (Test-Path $dstX86)) { New-Item -ItemType Directory -Force -Path $dstX86 | Out-Null }
-          Copy-Item -Path "$srcX86\*" -Destination $dstX86 -Recurse -Force
+          $srcX86 = "$binDir\$latestSdk\x86";
+          $dstX86 = "$binDir\x86";
+          if (-not (Test-Path $dstX86)) { $null = New-Item -ItemType Directory -Force -Path $dstX86; }
+          Copy-Item -Path "$srcX86\*" -Destination $dstX86 -Recurse -Force;
 
-          Write-Host "=== Configure VirtualBox ==="
+          Write-Host "=== Configure VirtualBox ===";
+          $qtDir = $env:QT_ROOT_DIR -replace '\\', '/';
 
-          # Sửa lại thành --with-Qt thay vì --with-qt5-dir
-          & cscript.exe //nologo configure.vbs "--with-SDK10=$sdk" "--with-libSDL=$env:VBOX_SDL_PATH" "--with-Qt=$env:QT_ROOT_DIR"
+          & cscript.exe //nologo configure.vbs "--with-SDK10=$sdk" "--with-libSDL=$env:VBOX_SDL_PATH" "--with-Qt=$qtDir";
 
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "=== configure.log (last 200 lines) ==="
-            if (Test-Path "configure.log") {
-              Get-Content "configure.log" -Tail 200
-            }
-            throw "VirtualBox configure failed with exit code $LASTEXITCODE."
+            if (Test-Path "configure.log") { Get-Content "configure.log" -Tail 200; }
+            throw "VirtualBox configure failed with exit code $LASTEXITCODE.";
           }
+
+          # Ép bật Qt6 GUI trực tiếp vào LocalConfig.kmk (phòng trường hợp configure.vbs bỏ sót Qt6)
+          $localCfg = @(
+            "VBOX_WITH_QTGUI = 1",
+            "VBOX_GUI_USE_QGL = 1",
+            "PATH_SDK_QT6 = $qtDir",
+            "PATH_TOOL_QT6 = $qtDir",
+            "PATH_TOOL_QT6_BIN = $qtDir/bin",
+            "VBOX_PATH_QT = $qtDir",
+            "VBOX_WITH_HARDENING = ",
+            "VBOX_WITHOUT_ADDITIONS = 1",
+            "VBOX_WITH_ADDITIONS_PACKING = ",
+            "VBOX_WITH_WARNINGS_AS_ERRORS = ",
+            "VBOX_WITH_TESTCASES = ",
+            "VBOX_WITH_VALIDATIONKIT = "
+          );
+          Set-Content -Path "LocalConfig.kmk" -Value $localCfg -Encoding utf8;
+
+          Write-Host "=== AutoConfig.kmk Content ===";
+          if (Test-Path "AutoConfig.kmk") { Get-Content "AutoConfig.kmk"; }
 
       - name: Build VirtualBox
         shell: pwsh
         working-directory: ${{ github.workspace }}
         run: |
-          $ErrorActionPreference = "Stop"
+          $ErrorActionPreference = "Stop";
 
-          $kmk = "$env:KBUILD_PATH\bin\win.amd64\kmk.exe"
+          # Đưa thư mục bin của Qt6 (chứa lrelease.exe, moc.exe, uic.exe) vào PATH hiện tại
+          $env:PATH = "$env:QT_ROOT_DIR\bin;$env:PATH";
 
-          if (-not (Test-Path $kmk)) {
-            throw "kmk.exe not found: $kmk"
-          }
+          $kmk = "$env:KBUILD_PATH\bin\win.amd64\kmk.exe";
+          $jobs = [Environment]::ProcessorCount;
+          Write-Host "Build jobs: $jobs";
 
-          $jobs = [Environment]::ProcessorCount
-          Write-Host "Build jobs: $jobs"
-          Write-Host "Building FULL VirtualBox (with GUI)..."
-
-          # VBOX_WITH_QTGUI đã được XÓA ĐI ở đây để quá trình build giao diện diễn ra bình thường
-          # Chỉ vô hiệu hóa NLS (ngôn ngữ) để tránh lỗi thiếu file .qm/.ts và tắt Hardening (tránh lỗi sign)
-          & $kmk "-j$jobs" `
-            "VBOX_WITHOUT_ADDITIONS=1" `
-            "VBOX_WITH_ADDITIONS_PACKING=" `
-            "VBOX_WITH_HARDENING=" `
-            "VBOX_WITH_NLS=" `
-            "VBOX_WITH_WARNINGS_AS_ERRORS="
+          # Chạy build toàn bộ (ĐÃ BỎ VBOX_WITH_NLS= để build đầy đủ giao diện)
+          & $kmk "-j$jobs";
 
           if ($LASTEXITCODE -ne 0) {
-            throw "kmk build failed with exit code $LASTEXITCODE."
+            throw "kmk build failed with exit code $LASTEXITCODE.";
           }
+
+      # 2. Kiểm tra file thực thi và đóng gói kèm toàn bộ DLL cần thiết
+      - name: Verify and Bundle Dependencies
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = "Stop";
+          $binOut = "out\win.amd64\release\bin";
+
+          if (-not (Test-Path $binOut)) {
+            throw "Output bin directory not found: $binOut";
+          }
+
+          # Copy SDL.dll vào thư mục bin
+          if (Test-Path "$env:VBOX_SDL_PATH\lib\SDL.dll") {
+            Copy-Item -Path "$env:VBOX_SDL_PATH\lib\SDL.dll" -Destination $binOut -Force;
+          }
+
+          # Dùng windeployqt của Qt6 để tự động gom toàn bộ DLL giao diện vào thư mục bin
+          $vboxExe = "$binOut\VirtualBox.exe";
+          $windeployqt = "$env:QT_ROOT_DIR\bin\windeployqt.exe";
+          if ((Test-Path $vboxExe) -and (Test-Path $windeployqt)) {
+            Write-Host "Deploying Qt6 runtime DLLs for VirtualBox.exe...";
+            & $windeployqt --release --no-translations --no-compiler-runtime $vboxExe;
+          } else {
+            Write-Warning "VirtualBox.exe was not generated! Listing existing .exe files:";
+          }
+
+          Write-Host "=== Generated Executables (.exe) ===";
+          Get-ChildItem -Path $binOut -Filter "*.exe" | Select-Object Name, Length;
 
       - name: Upload build diagnostics
         if: always()
@@ -257,12 +292,12 @@ jobs:
           path: |
             configure.log
             AutoConfig.kmk
+            LocalConfig.kmk
             Config.kmk
             env.bat
             *.log
             out/**/*.log
 
-      # Bước gom và tải thành phẩm (.exe, .dll) về sau khi build xong
       - name: Upload VirtualBox Binaries
         if: success()
         uses: actions/upload-artifact@v4
@@ -273,3 +308,4 @@ jobs:
             out/win.amd64/release/bin/
             !out/win.amd64/release/bin/**/*.obj
             !out/win.amd64/release/bin/**/*.pdb
+            !out/win.amd64/release/bin/testcase/
