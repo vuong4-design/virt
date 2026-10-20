@@ -157,7 +157,8 @@ jobs:
             throw "Expected Yasm 1.3.0."
           }
 
-          $dir \vert{} Out-File$env:GITHUB_PATH -Append -Encoding utf8
+          # Dùng Add-Content thay cho Out-File để tránh lỗi pipe
+          Add-Content -Path $env:GITHUB_PATH -Value $dir -Encoding utf8
           Write-Host "Yasm 1.3.0 is ready."
 
       - name: Setup libSDL
